@@ -10,8 +10,8 @@ from analogio import AnalogIn
 
 led       =   DigitalInOut(board.LED)
 sd_cs     =   DigitalInOut(board.xSDCS)
-xtb1_cs   =   DigitalInOut(board.D36)
-xtb1_DRDY =   DigitalInOut(board.D35)
+xtb1_cs   =   DigitalInOut(board.D35)
+xtb1_DRDY =   DigitalInOut(board.D36)
 
 
 led.direction        =  Direction.OUTPUT
@@ -66,20 +66,20 @@ except Exception as e:
 # -------------- ADC stuff ---------------------
 import ads124s08
 
-REFERENCE_VOLTAGE = 'EXTERNAL'
+REFERENCE_VOLTAGE = 'INTERNAL'
 
 if REFERENCE_VOLTAGE == 'EXTERNAL':
     AVDD = 0x31
-    vref = 5.0
-elif REFERENCE_VOLTAGE == 'INTERNAL'
+    VREF = 5.0
+elif REFERENCE_VOLTAGE == 'INTERNAL':
     AVDD = 0x39
-    vref = 2.5
+    VREF = 2.5
 
-xtb1 = ads124s08.XTB(spi, xtb1_cs, drdy=xtb1_DRDY, refV=VREF)
-time.sleep(0.5)
+xtb1 = ads124s08.XTB(spi, xtb1_cs, baudrate=10000000, drdy=xtb1_DRDY, refV=VREF)
+time.sleep(1)
 # make sure the board is alive
 if xtb1.regreadout()[0] != 8:
-    neopixel_write.neopixel_write(neopix, bytearray([0,255,0]))
+    # neopixel_write.neopixel_write(neopix, bytearray([0,255,0]))
     while True:
         time.sleep(2)
 
@@ -90,20 +90,30 @@ payload = []
 flag = False
 while True:
     now = time.monotonic()
-    # make 300 voltage measurements as quickly as possible between AIN1 and AIN2, while driving a current of 250uA on AIN3, and biasing AIN0 at 0.275V
-    data = xtb1.readpins(inp=1, inn=2, idacMux=3, idacMag=0x04, vb=0, pga=0x00, ref=AVDD, datarate=0x1B, burst=300)
+    # XTB BASELINE MEASUREMENT
+    # data = xtb1.test(inp=8, inn=12, ref=AVDD, printout=True)
+
+    # HALL MEASUREMENT
+    # make 100 voltage measurements as quickly as possible between AIN1 and AIN2, while driving a current of 250uA on AIN3, and biasing AIN0 at 0.275V
+    data = xtb1.readpins(inp=8, inn=12, idacMux=15, idacMag=0x04, vb=0, pga=0x00, ref=AVDD, datarate=0x1B, burst=300)
     payload.append((now,data))
 
     if now >= save_time:
         neopixel_write.neopixel_write(neopix, bytearray([0,0,255]))
-        temperature = board.readtemp(ref=AVDD)
         save_time = now + save_int
+        # make a temperature measurement
+        temperature = xtb1.readtemp(ref=AVDD)
         try:
             path = '/sd/'+filename    
             with open(path, "a") as f:
                 print('saving to...',path)
                 for item in payload:
-                    f.write('{}, '.format(item[1]))
+                    f.write('{}, {}, '.format(temperature,item[0]))
+                    for i in item[1]:
+                        f.write('{:E}, '.format(i))
+                    f.write('\n')
+                    # f.flush()
+                    # f.close()
                 payload = []
         except Exception as e:
             print('--- SD card error ---')
