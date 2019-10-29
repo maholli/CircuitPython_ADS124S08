@@ -62,7 +62,7 @@ class _ADS124S08:
         while self._drdy.value is True: # wait until DRDY goes low
             pass
         with self.spi_device as spi:
-            sleep(4e-8)  # wait 4*tclk        
+            sleep(4e-7)  # wait 4*tclk        
             spi.readinto(readbuf) 
         readData = self.dataconvert(readbuf)
         return readData
@@ -164,6 +164,9 @@ class _ADS124S08:
             return buffer
 
     def readpins(self, inp, inn, idacMag=0, idacMux=15, vb='off', vbhex='off', pga=0xA8, datarate=0x18, ref=0x39, delayT=0.01, hall=False, burst=0):
+        '''
+
+        '''
         vbPin = 0x80
         if vb != 'off' and vb < 6:
             vbPin = (0x80 | 1<<vb) 
