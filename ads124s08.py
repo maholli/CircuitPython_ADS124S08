@@ -1,8 +1,8 @@
-from time import sleep
+from time import sleep, monotonic
 from adafruit_bus_device import spi_device
 from math import sqrt
 
-default = bytes([0x42, 0x08, 0xCC, 0x08, 0x98, 0x3A, 0x00, 0xFF, 0x00, 0x18])
+default = bytes([0x41,0x09,0x00,0xCC,0x08,0x98,0x3A,0x00,0xFF,0x00,0x18])
 registers = [
                     "(ID):        ",
                     "(STATUS):    ",
@@ -23,8 +23,12 @@ registers = [
                     "(GPIODAT):   ",
                     "(GPIOCON):   "]
 
+
+
+
 class _ADS124S08:
     
+    _registers = bytearray(18)
 
     def __init__(self, refV, pgaGain=1, drdy_pin=0):
         self.DRDY = False
@@ -37,6 +41,7 @@ class _ADS124S08:
         self._LSBSIZE()
         self._init_adc()
         self.startTrig = True
+        self._status=bytearray(1)
 
     def _LSBSIZE(self):
         pgaGain = self.pgaGain
@@ -59,7 +64,14 @@ class _ADS124S08:
     
     def readValue_drdy(self):
         readbuf = bytearray(3)
+        _cnt=0
         while self._drdy.value is True: # wait until DRDY goes low
+            # _cnt+=1
+            # if _cnt > 10000:
+            #     print('DRDY TIMEOUT')
+            #     return 0
+            # else:
+            #     pass
             pass
         with self.spi_device as spi:
             sleep(4e-7)  # wait 4*tclk        
@@ -92,20 +104,38 @@ class _ADS124S08:
             spi.write(bytes([start]+[length]+cmd))
     
     def regreadout(self):
-        _readOut = bytearray(18)
+        
         with self.spi_device as spi:
             spi.write(bytes([0x20, 0x12]))
-            spi.readinto(_readOut)
+            spi.readinto(self._registers)
+        
+        assert self._registers[0] == 8
+
         print("-------------------------------")
-        for i, j in enumerate(_readOut):
+        for i, j in enumerate(self._registers):
             print(registers[i], hex(j))
         print("-------------------------------")
-        return _readOut
+        return self._registers
     
     def GPIO(self, GPIODAT, GPIOCON):
         with self.spi_device as spi:
             spi.write(bytes([0x50, 0x01, GPIODAT, GPIOCON]))
     
+    def status(self,debug=False):
+        with self.spi_device as spi:
+            spi.write(bytes([0x21, 0x01]))
+            spi.readinto(self._status)
+        status_byte = {'_POR'    :self._status[0]>>7&1,
+                       '_RDY'    :self._status[0]>>6&1,
+                       '_P_RAILP':self._status[0]>>5&1,
+                       '_P_RAILN':self._status[0]>>4&1,
+                       '_N_RAILP':self._status[0]>>3&1,
+                       '_N_RAILP':self._status[0]>>2&1,
+                       '_REFL1'  :self._status[0]>>1&1,
+                       '_REFL0'  :self._status[0]>>0&1}
+        if debug: [print(k,v) for k,v in status_byte.items()]
+        return self._status[0]
+
     def calibrate(self):
         with self.spi_device as spi:
             spi.write(bytes([0x19]))
@@ -122,15 +152,18 @@ class _ADS124S08:
             dataOUT = rawDataIN*self.LSBsize
         return dataOUT
 
-    def readtemp(self, ref=0x39):
+    def temperature(self,ref=0x39):
         _tbuff=0
+        with self.spi_device as spi:
+            spi.write(bytes([0x20, 0x12]))
+            spi.readinto(self._registers)
         with self.spi_device as spi:
             spi.write(bytes([0x42, 0x07, 0xCC, 0x00, 0x12, ref, 0x00, 0xFF, 0x38, 0x58]))
         for _ in range(5):
             _tbuff += self.readValue_drdy()*1000
         _tbuff = _tbuff/5
         with self.spi_device as spi:
-            spi.write(bytes([0x49, 0x00, 0x18]))        
+            spi.write(bytes([0x20, 0x12])+self._registers)        
         _output = (-1*((129.00-_tbuff)*0.403)+25)
         return _output
 
@@ -163,7 +196,7 @@ class _ADS124S08:
                 buffer.append((hex(idacMag), self.readpins(inn, inp, idacMag=idacMag, idacMux=idacMux, delayT=0.05)))
             return buffer
 
-    def readpins(self, inp, inn, idacMag=0, idacMux=15, vb='off', vbhex='off', pga=0xA8, datarate=0x18, ref=0x39, delayT=0.01, hall=False, burst=0):
+    def readpins(self, inp, inn, idacMag=0, idacMux=15, vb='off', vbhex='off', pga=0xA8, datarate=0x18, ref=0x39,sys=0x10, delayT=0.01, hall=False, burst=0, wait=False):
         '''
 
         '''
@@ -174,11 +207,14 @@ class _ADS124S08:
             vbPin = vbhex    
         inpMux  = (inp << 4) | inn               
         burstbuff = []
-        cmd     = bytes([0x42,0x06, inpMux, pga, datarate, ref, idacMag, (0xF0 | idacMux), vbPin])
+        cmd     = bytes([0x42,0x07, inpMux, pga, datarate, ref, idacMag, (0xF0 | idacMux), vbPin, sys])
         
         with self.spi_device as spi:
             spi.write(cmd)
         
+        if wait:
+            return
+
         if burst > 0:
             for _ in range(burst):
                 burstbuff.append(self.readValue_drdy())
@@ -208,3 +244,4 @@ class XTB(_ADS124S08):
     def __init__(self, spi, xtb_cs, drdy=0, baudrate=6000000, phase=1, polarity=0, refV=2.5):
         self.spi_device = spi_device.SPIDevice(spi, xtb_cs, baudrate=baudrate, phase=phase, polarity=polarity)
         super().__init__(refV, drdy_pin=drdy)
+
